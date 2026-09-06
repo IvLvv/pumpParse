@@ -1,0 +1,47 @@
+[Unit]
+Description=pumpParse — сканер pump.fun и веб-интерфейс
+After=network-online.target
+Wants=network-online.target
+# Сканер ходит в сеть и может падать пачками; не даём systemd сдаться навсегда.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=pumpparse
+Group=pumpparse
+WorkingDirectory=/srv/pumpparse/data
+
+# Пароль, ключ подписи сессий и логин лежат здесь, а не в юните:
+# юнит в git, файл окружения — нет. 600, владелец pumpparse.
+EnvironmentFile=/srv/pumpparse/app.env
+
+# Слушаем только петлю: наружу отдаёт nginx, он же держит TLS.
+# Cookie ставится с флагом Secure, потому что снаружи всё равно https.
+ExecStart=/srv/pumpparse/venv/bin/pumpparse --db /srv/pumpparse/data/pump.db web \
+    --host 127.0.0.1 --port 8000 --interval 20
+
+Restart=always
+RestartSec=5
+
+# Логи в journald без буферизации, иначе вывод висит в трубе до самого падения.
+Environment=PYTHONUNBUFFERED=1
+# Наружу смотрит nginx, он подставляет X-Forwarded-For и затирает клиентский.
+# Только с этим флагом попытки входа считаются по реальному адресу, а не по
+# 127.0.0.1 на всех сразу. Без nginx флаг снять — иначе троттлинг обходится
+# подделкой заголовка.
+Environment=PUMPPARSE_TRUST_PROXY=1
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/pumpparse/data
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

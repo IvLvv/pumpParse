@@ -1,0 +1,4 @@
+# Инструменты разработки, на прод не ставятся.
+#     pip install -r requirements-dev.txt
+pytest==9.1.1
+ruff==0.16.6

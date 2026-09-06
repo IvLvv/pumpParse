@@ -1,0 +1,12 @@
+* text=auto
+
+# На сервер эти файлы попадают через checkout из bare-репозитория и исполняются
+# оболочкой/systemd: CRLF внутри ломает shebang и значения директив.
+deploy/post-receive text eol=lf
+*.sh              text eol=lf
+*.service         text eol=lf
+nginx.conf.example text eol=lf
+
+*.py   text eol=lf
+*.html text eol=lf
+*.db   binary

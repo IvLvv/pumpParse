@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Хук bare-репозитория /srv/pumpparse/repo.git.
+# Срабатывает на `git push production main` с рабочей машины:
+# выкладывает код в рабочую копию, переустанавливает пакет, перезапускает сервис
+# и проверяет, что тот действительно поднялся. Если нет — откатывает на прошлый
+# коммит, чтобы неудачный пуш не оставил сервис лежать.
+set -euo pipefail
+
+BRANCH=main
+ROOT=/srv/pumpparse
+WORK="$ROOT/app"
+VENV="$ROOT/venv"
+SERVICE=pumpparse
+HEALTH=http://127.0.0.1:8000/healthz
+HEALTH_TRIES=15
+UV_BIN=/usr/local/bin/uv
+
+# Кеш uv и его сборка python лежат в $HOME пользователя сервиса. git-shell
+# при пуше по ssh не всегда выставляет HOME, а без него uv уходит искать
+# интерпретатор в чужой каталог.
+export HOME="$ROOT"
+
+say() { echo "  [deploy] $*"; }
+fail() { echo "  [deploy] ОШИБКА: $*" >&2; }
+
+health() {
+    for _ in $(seq "$HEALTH_TRIES"); do
+        if curl -fsS --max-time 2 "$HEALTH" >/dev/null 2>&1; then return 0; fi
+        sleep 1
+    done
+    return 1
+}
+
+# Разворачивает конкретный коммит и поднимает сервис. Отдельной функцией,
+# потому что тем же путём идёт и откат.
+release() {
+    local sha=$1
+    git --work-tree="$WORK" --git-dir="$ROOT/repo.git" checkout -f "$sha"
+    # --no-deps: зависимостей нет и появиться они не должны незаметно.
+    # --no-build-isolation: собираем setuptools'ом из venv, чтобы выкладка
+    #   не ходила в PyPI за временным окружением сборки.
+    "$UV_BIN" pip install --python "$VENV/bin/python" \
+        --no-deps --no-build-isolation --quiet --reinstall "$WORK"
+    sudo -n /bin/systemctl restart "$SERVICE"
+}
+
+while read -r _old new ref; do
+    if [ "$ref" != "refs/heads/$BRANCH" ]; then
+        say "ветка ${ref#refs/heads/} — пропускаю, выкладывается только $BRANCH"
+        continue
+    fi
+
+    # Что сейчас развёрнуто — берём из рабочей копии, а не из $_old:
+    # они расходятся после ручного отката или после force-push.
+    prev=$(git --git-dir="$ROOT/repo.git" --work-tree="$WORK" rev-parse HEAD 2>/dev/null || echo "")
+
+    say "выкладываю $(git --git-dir="$ROOT/repo.git" log -1 --format='%h %s' "$new")"
+    # Через if, а не голым вызовом: под set -e падение pip или systemctl
+    # оборвало бы весь хук прямо здесь, и до проверки живости с откатом
+    # дело бы не дошло — сервис остался бы лежать на новой версии.
+    if ! release "$new"; then
+        fail "выкладка прошла не полностью, проверяю сервис"
+    fi
+
+    if health; then
+        say "готово, сервис отвечает"
+        continue
+    fi
+
+    fail "сервис не ответил на $HEALTH за ${HEALTH_TRIES}с"
+    if [ -z "$prev" ] || [ "$prev" = "$new" ]; then
+        fail "откатывать некуда, разбирайтесь вручную: journalctl -u $SERVICE -n 50"
+        exit 1
+    fi
+    fail "откатываю на ${prev:0:8}"
+    if ! release "$prev"; then
+        fail "сам откат прошёл не полностью"
+    fi
+    if health; then
+        fail "откат удался, сервис на прошлой версии"
+    else
+        fail "откат не помог: journalctl -u $SERVICE -n 50"
+    fi
+    exit 1
+done

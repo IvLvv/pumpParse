@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pumpParse</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --line:#262c36; --txt:#e6edf3; --dim:#8b949e;
+    --acc:#2f81f7; --ok:#3fb950; --warn:#d29922; --bad:#f85149;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px 20px;
+         background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
+  h1{font-size:16px;margin:0;letter-spacing:.5px}
+  h1 span{color:var(--acc)}
+  .tabs{display:flex;gap:4px}
+  .tab{cursor:pointer;padding:6px 14px;border-radius:8px;border:1px solid transparent;
+       color:var(--dim);font-size:13px;display:flex;align-items:center;gap:7px}
+  .tab:hover{color:var(--txt)}
+  .tab.on{background:#0d1117;border-color:var(--line);color:var(--txt);font-weight:600}
+  .badge{background:var(--bad);color:#fff;border-radius:11px;min-width:20px;height:20px;
+         padding:0 6px;font-size:11px;font-weight:700;display:none;align-items:center;
+         justify-content:center;font-family:var(--mono)}
+  .badge.show{display:flex}
+  .badge.pulse{animation:pulse 1.2s ease-out}
+  @keyframes pulse{0%{transform:scale(1)}30%{transform:scale(1.35)}100%{transform:scale(1)}}
+  .stat{color:var(--dim);font-size:12px;font-family:var(--mono)}
+  .stat b{color:var(--txt);font-weight:600}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--dim);margin-right:6px}
+  .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dot.busy{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+  button,select,input{background:#0d1117;color:var(--txt);border:1px solid var(--line);
+                      border-radius:6px;padding:5px 9px;font:inherit}
+  button{cursor:pointer}
+  button:hover{border-color:var(--acc)}
+  button.pri{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+  button.danger:hover{border-color:var(--bad);color:var(--bad)}
+  main{padding:16px 20px;max-width:1500px;margin:0 auto}
+  .page{display:none}
+  .page.on{display:block}
+  .builder{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:16px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .row+.row{margin-top:10px}
+  .lbl{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.6px;min-width:74px}
+  .chip{background:#0d1117;border:1px solid var(--line);border-radius:20px;padding:4px 10px;
+        font-family:var(--mono);font-size:12px;display:inline-flex;align-items:center;gap:7px}
+  .chip b{color:var(--acc);font-weight:600}
+  .chip x{cursor:pointer;color:var(--dim);font-style:normal}
+  .chip x:hover{color:var(--bad)}
+  .preset{cursor:pointer;border-radius:20px;padding:4px 11px;font-size:12px;
+          border:1px solid var(--line);background:#0d1117}
+  .preset:hover{border-color:var(--acc)}
+  .preset.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  .hint{color:var(--dim);font-size:12px;font-family:var(--mono)}
+  .tablewrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.6px;
+     padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+  tr:hover td{background:#12171e}
+  tr.fresh td{background:rgba(47,129,247,.08)}
+  tr.fresh td:first-child{box-shadow:inset 3px 0 0 var(--acc)}
+  .sym{font-weight:700;font-family:var(--mono)}
+  .nm{color:var(--dim);font-size:12px}
+  .num{font-family:var(--mono);text-align:right;white-space:nowrap}
+  .dev{cursor:pointer;color:var(--acc);font-family:var(--mono);font-size:12px}
+  .dev:hover{text-decoration:underline}
+  .score{display:inline-block;min-width:34px;text-align:center;border-radius:5px;padding:2px 6px;
+         font-family:var(--mono);font-weight:700;font-size:12px}
+  .s-hi{background:rgba(63,185,80,.15);color:var(--ok)}
+  .s-md{background:rgba(210,153,34,.15);color:var(--warn)}
+  .s-lo{background:rgba(139,148,158,.12);color:var(--dim)}
+  .w{font-family:var(--mono);font-size:12px;color:var(--dim);white-space:nowrap}
+  .w b{color:var(--ok)}
+  .w i{font-style:normal;color:var(--bad)}
+  .soc a{color:var(--dim);text-decoration:none;font-size:11px;font-family:var(--mono)}
+  .soc a:hover{color:var(--acc)}
+  .empty{padding:50px;text-align:center;color:var(--dim)}
+  .st{display:inline-block;border-radius:4px;padding:1px 7px;font-size:11px;font-family:var(--mono)}
+  .st-mig{background:rgba(63,185,80,.16);color:var(--ok)}
+  .st-stay{background:rgba(139,148,158,.12);color:var(--dim)}
+  .st-may{background:rgba(210,153,34,.14);color:var(--warn);margin-left:4px}
+  .st-ven{background:rgba(47,129,247,.14);color:var(--acc);margin-left:4px}
+  .hist{max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:8px}
+  .hist table{width:100%}
+  .hist th{position:sticky;top:0;background:var(--panel);z-index:1;padding:6px}
+  .hist td{border-bottom:1px solid var(--line)}
+  .hist tr:last-child td{border-bottom:none}
+  #drawer{position:fixed;top:0;right:0;width:560px;max-width:96vw;height:100%;background:var(--panel);
+          border-left:1px solid var(--line);padding:20px;overflow:auto;transform:translateX(102%);
+          transition:transform .18s ease;z-index:20}
+  #drawer.open{transform:none}
+  #drawer h2{font-size:15px;margin:0 0 4px;font-family:var(--mono);word-break:break-all}
+  #drawer table{margin-top:10px}
+  #drawer td{padding:5px 6px;font-family:var(--mono);font-size:12px}
+  .close{position:absolute;top:14px;right:16px}
+  .err{background:rgba(248,81,73,.12);border:1px solid var(--bad);color:var(--bad);
+       padding:8px 12px;border-radius:6px;margin-bottom:12px;font-family:var(--mono);font-size:12px}
+  .saved{color:var(--ok);font-size:12px;font-family:var(--mono);opacity:0;transition:opacity .2s}
+  .saved.show{opacity:1}
+  #toasts{position:fixed;right:18px;bottom:18px;z-index:30;display:flex;flex-direction:column;gap:8px}
+  .toast{background:var(--panel);border:1px solid var(--acc);border-left:3px solid var(--acc);
+         border-radius:8px;padding:10px 14px;min-width:230px;box-shadow:0 6px 24px rgba(0,0,0,.5);
+         animation:slide .2s ease}
+  @keyframes slide{from{transform:translateX(20px);opacity:0}to{transform:none;opacity:1}}
+  .toast b{color:var(--acc)}
+  .toast .nm{margin-top:2px}
+  .why{font-family:var(--mono);font-size:11px;color:var(--dim)}
+</style>
+</head>
+<body>
+<header>
+  <h1>pump<span>Parse</span></h1>
+  <div class="tabs">
+    <div class="tab on" data-page="repo">Общий репозиторий</div>
+    <div class="tab" data-page="pool">Пул <span class="badge" id="badge">0</span></div>
+  </div>
+  <span class="stat"><span id="dot" class="dot"></span><b id="wstate">—</b></span>
+  <span class="stat">монет <b id="c-coins">0</b> · девов <b id="c-devs">0</b></span>
+  <span class="stat">опрос <b id="c-poll">—</b></span>
+  <span style="flex:1"></span>
+  <label class="stat">интервал
+    <select id="interval">
+      <option value="10">10s</option><option value="20" selected>20s</option>
+      <option value="60">60s</option><option value="300">5m</option>
+    </select>
+  </label>
+  <button id="toggle">пауза</button>
+  <button id="refresh" class="pri">обновить</button>
+  <button id="logout" style="display:none">выйти</button>
+</header>
+
+<main>
+  <div id="err" class="err" style="display:none"></div>
+
+  <!-- ================= общий репозиторий ================= -->
+  <section class="page on" id="page-repo">
+    <div class="builder">
+      <div class="row">
+        <span class="lbl">пресеты</span>
+        <span id="presets"></span>
+      </div>
+      <div class="row">
+        <span class="lbl">условие</span>
+        <select id="m"></select>
+        <select id="op">
+          <option>&gt;=</option><option>&lt;=</option><option>&gt;</option><option>&lt;</option><option>==</option>
+        </select>
+        <input id="v" type="number" step="any" value="3" style="width:90px">
+        <span class="hint">@ последних</span>
+        <select id="w"></select>
+        <button id="add">добавить</button>
+        <span class="hint" id="mhint"></span>
+      </div>
+      <div class="row">
+        <span class="lbl">активны</span>
+        <span id="chips"><span class="hint">условий нет — показываются все монеты</span></span>
+      </div>
+      <div class="row">
+        <span class="lbl">режим</span>
+        <label class="hint"><input type="radio" name="mode" value="all" checked> все условия (И)</label>
+        <label class="hint"><input type="radio" name="mode" value="any"> любое (ИЛИ)</label>
+        <span class="stat">показано <b id="c-shown">0</b></span>
+        <span style="flex:1"></span>
+        <button id="clear">очистить</button>
+      </div>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>возраст</th><th>тикер</th><th class="num">капа</th><th>соцсети</th>
+          <th>дев</th><th class="num">всего</th><th class="num">миграций</th>
+          <th>окно 10</th><th class="num">score</th><th>вердикт</th>
+        </tr></thead>
+        <tbody id="tb"></tbody>
+      </table>
+    </div>
+    <div id="empty" class="empty">пусто — сканер ещё собирает данные либо условия слишком строгие</div>
+  </section>
+
+  <!-- ================= пул ================= -->
+  <section class="page" id="page-pool">
+    <div class="builder">
+      <div class="row">
+        <span class="lbl">пул</span>
+        <label class="hint"><input type="checkbox" id="p-enabled" checked> отбор включён</label>
+        <span class="hint">новые монеты, прошедшие фильтр, попадают сюда автоматически —
+          даже когда вкладка закрыта</span>
+      </div>
+      <div class="row">
+        <span class="lbl">капа $</span>
+        <input id="p-mcmin" type="number" step="any" placeholder="от" style="width:110px">
+        <input id="p-mcmax" type="number" step="any" placeholder="до (пусто — без границы)" style="width:190px">
+        <span class="lbl" style="min-width:auto;margin-left:10px">свежесть</span>
+        <select id="p-age">
+          <option value="60">до 1 минуты</option>
+          <option value="300">до 5 минут</option>
+          <option value="900" selected>до 15 минут</option>
+          <option value="3600">до часа</option>
+          <option value="86400">до суток</option>
+          <option value="0">без ограничения</option>
+        </select>
+        <label class="hint"><input type="checkbox" id="p-social"> только с соцсетями</label>
+        <span class="lbl" style="min-width:auto">score от</span>
+        <input id="p-score" type="number" value="0" style="width:80px">
+      </div>
+      <div class="row">
+        <span class="lbl">дев</span>
+        <select id="pm"></select>
+        <select id="pop">
+          <option>&gt;=</option><option>&lt;=</option><option>&gt;</option><option>&lt;</option><option>==</option>
+        </select>
+        <input id="pv" type="number" step="any" value="3" style="width:90px">
+        <span class="hint">@ последних</span>
+        <select id="pw"></select>
+        <button id="padd">добавить</button>
+        <span class="hint" id="pmhint"></span>
+      </div>
+      <div class="row">
+        <span class="lbl">условия</span>
+        <span id="pchips"><span class="hint">условий по деву нет</span></span>
+      </div>
+      <div class="row">
+        <span class="lbl">режим</span>
+        <label class="hint"><input type="radio" name="pmode" value="all" checked> все (И)</label>
+        <label class="hint"><input type="radio" name="pmode" value="any"> любое (ИЛИ)</label>
+        <span style="flex:1"></span>
+        <span class="saved" id="p-saved">сохранено</span>
+        <button id="p-save" class="pri">сохранить фильтр</button>
+        <button id="p-clear" class="danger">очистить пул</button>
+      </div>
+    </div>
+
+    <div class="row" style="margin-bottom:10px">
+      <span class="stat">в пуле <b id="p-total">0</b> монет · непрочитанных <b id="p-unread">0</b></span>
+      <button id="p-seen">отметить прочитанными</button>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>добавлено</th><th>возраст</th><th>тикер</th><th class="num">капа</th>
+          <th>соцсети</th><th>дев</th><th>окно 10</th><th class="num">score</th><th>почему прошла</th>
+        </tr></thead>
+        <tbody id="ptb"></tbody>
+      </table>
+    </div>
+    <div id="pempty" class="empty">пул пуст — настрой фильтр и дождись новых монет</div>
+  </section>
+</main>
+
+<div id="drawer">
+  <button class="close" id="dclose">✕</button>
+  <div id="dbody"></div>
+</div>
+<div id="toasts"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let RULES = [], PRULES = [], PRESETS = {}, METRICS = {}, WINDOWS = [];
+let page = 'repo', lastUnread = 0, poolLoaded = false;
+const active = new Set();
+
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => n == null ? '—' : '$' + Math.round(n).toLocaleString('ru-RU');
+const age = ms => {
+  if (!ms) return '—';
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  return s < 60 ? Math.round(s) + 'с' : s < 3600 ? Math.round(s / 60) + 'м' : Math.round(s / 3600) + 'ч';
+};
+const safeUrl = u => /^https?:\/\//i.test(u || '') ? u : null;
+const scoreCls = s => s >= 60 ? 's-hi' : s >= 30 ? 's-md' : 's-lo';
+
+function toLogin() {
+  location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+}
+
+function showErr(m) {
+  const e = $('#err');
+  if (!m) { e.style.display = 'none'; return; }
+  e.textContent = m; e.style.display = 'block';
+}
+
+async function api(path, body) {
+  const opt = body ? {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  } : undefined;
+  const resp = await fetch(path, opt);
+  // Сессия протухла или сервер перезапустился с новым ключом подписи —
+  // страница опрашивается фоном, поэтому уводим на вход сами.
+  if (resp.status === 401) { toLogin(); throw new Error('нужен вход'); }
+  const r = await resp.json();
+  if (r.error) throw new Error(r.error);
+  return r;
+}
+
+/* ---------------- вкладки ---------------- */
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  page = t.dataset.page;
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
+  document.querySelectorAll('.page').forEach(x => x.classList.toggle('on', x.id === 'page-' + page));
+  if (page === 'pool') {
+    loadPool().then(() => api('/api/pool/seen', {}).then(status));
+  }
+});
+
+/* ---------------- статус ---------------- */
+async function status() {
+  let r;
+  try { r = await api('/api/status'); }
+  catch (e) { return showErr('сервер недоступен: ' + e.message); }
+  METRICS = r.metrics; WINDOWS = r.windows; PRESETS = r.presets;
+  $('#c-coins').textContent = r.counts.coins;
+  $('#c-devs').textContent = r.counts.creators;
+  $('#c-poll').textContent = r.last_poll
+    ? age(r.last_poll * 1000) + ' назад (+' + r.new_last_poll + ')' : 'ещё не было';
+  $('#wstate').textContent = r.busy ? 'опрашивает' : (r.running ? 'следит' : 'на паузе');
+  $('#dot').className = 'dot ' + (r.busy ? 'busy' : r.running ? 'on' : '');
+  $('#toggle').textContent = r.running ? 'пауза' : 'запустить';
+  $('#logout').style.display = r.auth ? '' : 'none';
+  $('#logout').title = r.auth ? 'выйти (' + r.auth + ')' : '';
+  if (r.last_error) showErr('воркер: ' + r.last_error);
+
+  const b = $('#badge');
+  b.textContent = r.pool_unread;
+  b.classList.toggle('show', r.pool_unread > 0);
+  if (r.pool_unread > lastUnread) {
+    b.classList.remove('pulse'); void b.offsetWidth; b.classList.add('pulse');
+    if (page === 'pool') loadPool();
+  }
+  lastUnread = r.pool_unread;
+  $('#p-unread').textContent = r.pool_unread;
+  $('#p-total').textContent = r.pool_total;
+  if (!$('#m').options.length) initControls();
+}
+
+function initControls() {
+  const opts = Object.keys(METRICS).map(k => '<option value="' + k + '">' + k + '</option>').join('');
+  const wins = WINDOWS.map(w => '<option' + (w === 10 ? ' selected' : '') + '>' + w + '</option>').join('');
+  $('#m').innerHTML = opts; $('#pm').innerHTML = opts;
+  $('#w').innerHTML = wins; $('#pw').innerHTML = wins;
+  $('#presets').innerHTML = Object.entries(PRESETS).map(([k, v]) =>
+    '<span class="preset" data-p="' + k + '" title="' + esc(v.join(' и ')) + '">' + k + '</span>').join(' ');
+  $('#presets').onclick = e => {
+    const p = e.target.dataset.p;
+    if (!p) return;
+    if (active.has(p)) active.delete(p); else active.add(p);
+    e.target.classList.toggle('on');
+    drawChips(); load();
+  };
+  hint('#m', '#mhint'); hint('#pm', '#pmhint');
+  loadPoolConfig();
+}
+const hint = (sel, out) => $(out).textContent = METRICS[$(sel).value] || '';
+
+/* ---------------- условия ---------------- */
+function drawChips() {
+  const box = $('#chips');
+  if (!RULES.length && !active.size) {
+    box.innerHTML = '<span class="hint">условий нет — показываются все монеты</span>';
+    return;
+  }
+  box.innerHTML =
+    RULES.map((r, i) => '<span class="chip"><b>' + esc(r) + '</b><x data-i="' + i + '">✕</x></span>').join(' ') +
+    ' ' + [...active].map(p => '<span class="chip">пресет <b>' + esc(p) + '</b></span>').join(' ');
+  box.querySelectorAll('x').forEach(x => x.onclick = () => {
+    RULES.splice(+x.dataset.i, 1); drawChips(); load();
+  });
+}
+
+function drawPChips() {
+  const box = $('#pchips');
+  if (!PRULES.length) { box.innerHTML = '<span class="hint">условий по деву нет</span>'; return; }
+  box.innerHTML = PRULES.map((r, i) =>
+    '<span class="chip"><b>' + esc(r) + '</b><x data-i="' + i + '">✕</x></span>').join(' ');
+  box.querySelectorAll('x').forEach(x => x.onclick = () => { PRULES.splice(+x.dataset.i, 1); drawPChips(); });
+}
+
+function winCell(dev) {
+  const wins = dev && dev.windows;
+  if (!wins) return '<span class="hint">—</span>';
+  const w = wins['10'] || wins[Object.keys(wins)[0]];
+  if (!w) return '<span class="hint">—</span>';
+  const g = w.mig > 0 ? '<b>' + w.mig + '/' + w.coins + '</b>' : '<i>0/' + w.coins + '</i>';
+  return '<span class="w">' + g + ' · подряд ' + w.streak + ' · gap ' + w.gap + '</span>';
+}
+
+function socCell(r) {
+  return [['X', r.twitter], ['TG', r.telegram], ['WEB', r.website]]
+    .map(([t, u]) => safeUrl(u) ? '<a href="' + esc(u) + '" target="_blank" rel="noreferrer">' + t + '</a>' : null)
+    .filter(Boolean).join(' ') || '<span class="hint">—</span>';
+}
+
+const symCell = r => '<a class="sym" style="color:inherit;text-decoration:none" target="_blank" ' +
+  'rel="noreferrer" href="https://pump.fun/coin/' + esc(r.mint) + '">' + esc(r.symbol || '?') + '</a>' +
+  '<div class="nm">' + esc((r.name || '').slice(0, 26)) + '</div>';
+
+/* ---------------- общий репозиторий ---------------- */
+async function load() {
+  const params = new URLSearchParams({
+    rules: RULES.join(';'),
+    presets: [...active].join(','),
+    any: document.querySelector('input[name=mode]:checked').value === 'any' ? '1' : '0',
+    limit: '400'
+  });
+  let d;
+  try { d = await api('/api/feed?' + params); }
+  catch (e) { return showErr(e.message); }
+  showErr(null);
+  $('#c-shown').textContent = d.total + (d.stale ? ' (+' + d.stale + ' без данных)' : '');
+  $('#empty').style.display = d.rows.length ? 'none' : 'block';
+  $('#empty').textContent = d.stale
+    ? d.stale + ' монет пропущено: их девы профилировались до появления этого окна — ' +
+      'подожди следующий проход сканера либо открой дева вручную'
+    : 'пусто — сканер ещё собирает данные либо условия слишком строгие';
+  $('#tb').innerHTML = d.rows.map(r => {
+    const dev = r.dev || {};
+    const sc = dev.score == null ? 0 : dev.score;
+    return '<tr>' +
+      '<td class="w">' + age(r.created_timestamp) + '</td>' +
+      '<td>' + symCell(r) + '</td>' +
+      '<td class="num">' + fmt(r.usd_market_cap) + '</td>' +
+      '<td class="soc">' + socCell(r) + '</td>' +
+      '<td><span class="dev" data-a="' + esc(r.creator) + '">' +
+        esc(dev.username || (r.creator || '').slice(0, 8)) + '</span></td>' +
+      '<td class="num">' + (dev.total_coins == null ? '—' : dev.total_coins) + '</td>' +
+      '<td class="num">' + (dev.migrated == null ? '—' : dev.migrated) + '</td>' +
+      '<td>' + winCell(dev) + '</td>' +
+      '<td class="num"><span class="score ' + scoreCls(sc) + '">' + sc + '</span></td>' +
+      '<td class="nm">' + esc(dev.verdict || '—') + '</td>' +
+    '</tr>';
+  }).join('');
+  bindDevs('#tb');
+}
+
+const bindDevs = sel => document.querySelectorAll(sel + ' .dev')
+  .forEach(e => e.onclick = () => openDev(e.dataset.a));
+
+/* ---------------- пул ---------------- */
+async function loadPoolConfig() {
+  let d;
+  try { d = await api('/api/pool'); } catch (e) { return showErr(e.message); }
+  const c = d.config;
+  $('#p-enabled').checked = c.enabled;
+  $('#p-mcmin').value = c.mcap_min || '';
+  $('#p-mcmax').value = c.mcap_max == null ? '' : c.mcap_max;
+  $('#p-social').checked = c.require_social;
+  $('#p-score').value = c.min_score;
+  const ageSel = $('#p-age');
+  const val = String(c.age_max_sec == null ? 0 : c.age_max_sec);
+  if ([...ageSel.options].some(o => o.value === val)) ageSel.value = val;
+  document.querySelector('input[name=pmode][value=' + (c.any ? 'any' : 'all') + ']').checked = true;
+  PRULES = c.rules.slice();
+  drawPChips();
+  renderPool(d);
+}
+
+async function savePoolConfig() {
+  const cfg = {
+    enabled: $('#p-enabled').checked,
+    rules: PRULES,
+    any: document.querySelector('input[name=pmode]:checked').value === 'any',
+    mcap_min: +$('#p-mcmin').value || 0,
+    mcap_max: $('#p-mcmax').value === '' ? null : +$('#p-mcmax').value,
+    age_max_sec: +$('#p-age').value,
+    require_social: $('#p-social').checked,
+    min_score: +$('#p-score').value || 0
+  };
+  try { await api('/api/pool/config', cfg); }
+  catch (e) { return showErr(e.message); }
+  showErr(null);
+  const s = $('#p-saved');
+  s.classList.add('show');
+  setTimeout(() => s.classList.remove('show'), 1500);
+}
+
+async function loadPool() {
+  try { renderPool(await api('/api/pool?limit=300')); }
+  catch (e) { showErr(e.message); }
+}
+
+function renderPool(d) {
+  poolLoaded = true;
+  $('#p-total').textContent = d.total;
+  $('#p-unread').textContent = d.unread;
+  $('#pempty').style.display = d.rows.length ? 'none' : 'block';
+  $('#ptb').innerHTML = d.rows.map(r => {
+    const dev = r.dev || {};
+    const sc = dev.score == null ? 0 : dev.score;
+    return '<tr class="' + (r.seen ? '' : 'fresh') + '">' +
+      '<td class="w">' + age(r.added_at) + ' назад</td>' +
+      '<td class="w">' + age(r.created_timestamp) + '</td>' +
+      '<td>' + symCell(r) + '</td>' +
+      '<td class="num">' + fmt(r.usd_market_cap) + '</td>' +
+      '<td class="soc">' + socCell(r) + '</td>' +
+      '<td><span class="dev" data-a="' + esc(r.creator) + '">' +
+        esc(dev.username || (r.creator || '').slice(0, 8)) + '</span></td>' +
+      '<td>' + winCell(dev) + '</td>' +
+      '<td class="num"><span class="score ' + scoreCls(sc) + '">' + sc + '</span></td>' +
+      '<td class="why">' + esc((r.why || []).join(' · ')) + '</td>' +
+    '</tr>';
+  }).join('');
+  bindDevs('#ptb');
+}
+
+function toast(row) {
+  const box = $('#toasts');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = '<b>+ в пул: ' + esc(row.symbol || '?') + '</b>' +
+    '<div class="nm">' + esc((row.name || '').slice(0, 30)) + ' · ' + fmt(row.usd_market_cap) + '</div>' +
+    '<div class="why">' + esc((row.why || []).join(' · ')) + '</div>';
+  el.onclick = () => el.remove();
+  box.appendChild(el);
+  setTimeout(() => el.remove(), 9000);
+}
+
+let knownPool = new Set();
+async function pollPool() {
+  let d;
+  try { d = await api('/api/pool?limit=50'); } catch (e) { return; }
+  const first = !knownPool.size;
+  d.rows.forEach(r => {
+    if (!first && !knownPool.has(r.mint) && !r.seen) toast(r);
+    knownPool.add(r.mint);
+  });
+  if (page === 'pool') renderPool(d);
+}
+
+/* ---------------- панель дева ---------------- */
+async function openDev(addr) {
+  $('#drawer').classList.add('open');
+  $('#dbody').innerHTML = '<h2>' + esc(addr) + '</h2><p class="hint">запрашиваю историю…</p>';
+  let p;
+  try { p = await api('/api/dev?address=' + encodeURIComponent(addr)); }
+  catch (e) { $('#dbody').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; return; }
+  const wins = Object.entries(p.windows).sort((a, b) => a[0] - b[0]).map(([n, w]) =>
+    '<tr><td>окно ' + n + '</td><td>' + w.mig + '/' + w.coins + ' миграций</td>' +
+    '<td>подряд ' + w.streak + '</td><td>ray ' + w.ray + ' · swap ' + w.pswap + '</td>' +
+    '<td>' + w.pace + '/сут</td></tr>').join('');
+  const rows = [
+    ['всего монет', p.total_coins],
+    ['миграций (обе площадки)', p.migrated + ' — raydium ' + p.migrated_raydium +
+      ', pumpswap ' + p.migrated_pumpswap +
+      (p.migrated - p.migrated_raydium - p.migrated_pumpswap
+        ? ', без пула ' + (p.migrated - p.migrated_raydium - p.migrated_pumpswap) : '')],
+    ['доля миграций', (p.migration_rate * 100).toFixed(0) + '%'],
+    ['лучший ATH', fmt(p.best_ath)], ['медианный ATH', fmt(p.median_ath)],
+    ['осталось на кривой', p.stayed_coins + ' (' + Math.round(p.stayed_rate * 100) + '%)'],
+    ['запусков/сут', p.launches_per_day], ['подписчиков', p.followers],
+    ['история обрезана', p.truncated ? 'да, лимит 300' : 'нет']
+  ].map(([k, v]) => '<tr><td class="hint">' + k + '</td><td colspan="4">' + esc(v) + '</td></tr>').join('');
+  $('#dbody').innerHTML =
+    '<h2>' + esc(p.username || addr.slice(0, 10)) + '</h2>' +
+    '<div class="hint" style="word-break:break-all">' + esc(addr) + '</div>' +
+    '<div style="margin:10px 0"><span class="score ' + scoreCls(p.score) + '">' + p.score + '</span>' +
+      '<span class="nm"> ' + esc(p.verdict) + '</span></div>' +
+    '<table>' + rows + wins + '</table>' +
+    history(p);
+}
+
+const STATES = { mig: ['миграция', 'st-mig'], stay: ['осталась', 'st-stay'] };
+
+function history(p) {
+  const coins = p.coins || [];
+  if (!coins.length) return '<p class="hint" style="margin-top:14px">история пуста</p>';
+  const n = { mig: 0, stay: 0 };
+  coins.forEach(c => n[c.state] != null && n[c.state]++);
+  const rows = coins.map(c => {
+    const [label, cls] = STATES[c.state] || ['?', ''];
+    // Mayhem-раунд pump.fun рисует как «Completed», хотя ликвидность никуда не уезжала.
+    const may = c.mayhem ? '<span class="st st-may" title="раунд Mayhem, не миграция">mayhem</span>' : '';
+    // Куда уехала ликвидность: Raydium (старые монеты) или PumpSwap (все свежие).
+    const ven = c.venue ? '<span class="st st-ven">' + esc(c.venue) + '</span>' : '';
+    return '<tr>' +
+      '<td class="hint">' + age(c.created_timestamp) + '</td>' +
+      '<td><a class="dev" target="_blank" rel="noreferrer" ' +
+        'href="https://pump.fun/coin/' + esc(c.mint) + '" title="' + esc(c.name || '') + '">' +
+        esc((c.symbol || '?').slice(0, 12)) + '</a>' +
+        '<div class="hint" style="font-size:10px">' + esc(c.mint.slice(0, 6)) + '…</div></td>' +
+      '<td><span class="st ' + cls + '">' + label + '</span>' + ven + may + '</td>' +
+      '<td class="num">' + fmt(c.usd_market_cap) + '</td>' +
+      '<td class="num">' + fmt(c.ath_market_cap) + '</td>' +
+      '<td class="hint">' + (c.has_social ? 'X/TG' : '—') + '</td>' +
+    '</tr>';
+  }).join('');
+  return '<p class="hint" style="margin:14px 0 6px">история запусков — ' + coins.length +
+      ' монет: <b style="color:var(--ok)">' + n.mig + ' мигрировало</b>, ' +
+      n.stay + ' осталось на кривой' +
+      (p.truncated ? ' (обрезано на 300)' : '') + '</p>' +
+    '<div class="hist"><table>' +
+      '<thead><tr><th>возраст</th><th>тикер</th><th>статус</th>' +
+      '<th class="num">капа</th><th class="num">ATH</th><th>соц</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>';
+}
+
+/* ---------------- обработчики ---------------- */
+async function setWorker(on) {
+  try { await api('/api/worker', { running: on, interval: +$('#interval').value }); }
+  catch (e) { return showErr(e.message); }
+  status();
+}
+
+$('#m').onchange = () => hint('#m', '#mhint');
+$('#pm').onchange = () => hint('#pm', '#pmhint');
+$('#add').onclick = () => {
+  const r = $('#m').value + $('#op').value + $('#v').value + '@' + $('#w').value;
+  if (!RULES.includes(r)) RULES.push(r);
+  drawChips(); load();
+};
+$('#padd').onclick = () => {
+  const r = $('#pm').value + $('#pop').value + $('#pv').value + '@' + $('#pw').value;
+  if (!PRULES.includes(r)) PRULES.push(r);
+  drawPChips();
+};
+$('#clear').onclick = () => {
+  RULES = []; active.clear();
+  document.querySelectorAll('.preset.on').forEach(e => e.classList.remove('on'));
+  drawChips(); load();
+};
+$('#refresh').onclick = () => { status(); load(); if (page === 'pool') loadPool(); };
+$('#logout').onclick = () => api('/api/logout', {}).then(toLogin);
+$('#dclose').onclick = () => $('#drawer').classList.remove('open');
+$('#toggle').onclick = () => setWorker($('#toggle').textContent === 'запустить');
+$('#interval').onchange = () => setWorker($('#toggle').textContent === 'пауза');
+document.querySelectorAll('input[name=mode]').forEach(e => e.onchange = load);
+$('#p-save').onclick = savePoolConfig;
+$('#p-seen').onclick = () => api('/api/pool/seen', {}).then(() => { loadPool(); status(); });
+$('#p-clear').onclick = () => {
+  if (!confirm('Очистить пул? Монеты удалятся только из пула, общий репозиторий не тронется.')) return;
+  api('/api/pool/clear', {}).then(() => { knownPool.clear(); loadPool(); status(); });
+};
+
+status(); load(); pollPool();
+setInterval(status, 5000);
+setInterval(load, 15000);
+setInterval(pollPool, 7000);
+</script>
+</body>
+</html>

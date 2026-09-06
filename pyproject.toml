@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pumpparse"
+version = "1.0.0"
+description = "Сканер новых токенов pump.fun с профилированием создателя"
+requires-python = ">=3.11"
+
+# Пусто намеренно: сервис работает на стандартной библиотеке (urllib, sqlite3,
+# http.server, hashlib). Ставить на прод нужно с --no-deps, чтобы pip физически
+# не мог подтянуть ничего постороннего.
+dependencies = []
+
+[project.scripts]
+pumpparse = "pumpparse.cli:main"
+
+[tool.setuptools]
+packages = ["pumpparse"]
+
+[tool.setuptools.package-data]
+pumpparse = ["static/*.html"]
+
+# Инструменты разработки. В рантайме не нужны, на прод не ставятся:
+# `pip install --no-deps .` их не тянет, установка отдельная —
+# pip install -r requirements-dev.txt
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "ruff==0.16.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # порядок импортов
+    "UP",        # устаревшие конструкции
+    "B",         # типичные ловушки bugbear
+    "S",         # bandit: небезопасные вызовы
+    "C4",        # comprehensions
+    "SIM",       # упрощения
+    "RET",       # return
+    "PTH",       # os.path -> pathlib
+]
+ignore = [
+    "S101",     # assert: тесты на нём и держатся
+    "PTH118", "PTH120", "PTH123",  # os.path в web.py читается не хуже pathlib
+    "SIM108",   # тернарник вместо if не всегда читаемее
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Тесты бьют по серверу мусорными данными, поднимают его на localhost и
+# запускают скрипты выкладки через subprocess — ругань про хардкод паролей,
+# адресов и запуск процессов здесь ожидаема.
+"tests/*" = ["S105", "S106", "S310", "S311", "S603", "B017"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
