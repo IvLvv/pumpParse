@@ -174,7 +174,7 @@
         <thead><tr>
           <th>возраст</th><th>тикер</th><th class="num">капа</th><th>соцсети</th>
           <th>дев</th><th class="num">всего</th><th class="num">миграций</th>
-          <th>окно 10</th><th class="num">score</th><th>вердикт</th>
+          <th id="th-win">окно 10</th><th class="num">score</th><th>вердикт</th>
         </tr></thead>
         <tbody id="tb"></tbody>
       </table>
@@ -244,7 +244,7 @@
       <table>
         <thead><tr>
           <th>добавлено</th><th>возраст</th><th>тикер</th><th class="num">капа</th>
-          <th>соцсети</th><th>дев</th><th>окно 10</th><th class="num">score</th><th>почему прошла</th>
+          <th>соцсети</th><th>дев</th><th id="pth-win">окно 10</th><th class="num">score</th><th>почему прошла</th>
         </tr></thead>
         <tbody id="ptb"></tbody>
       </table>
@@ -382,11 +382,36 @@ function drawPChips() {
   box.querySelectorAll('x').forEach(x => x.onclick = () => { PRULES.splice(+x.dataset.i, 1); drawPChips(); });
 }
 
-function winCell(dev) {
+// Окна, упомянутые в правилах, в порядке появления. Нужны, чтобы столбец
+// среза показывал то же окно, по которому шёл отбор: иначе строка, прошедшая
+// mig>=3@20, показывает срез по десятке и выглядит не проходящей условие,
+// по которому она как раз и попала в список.
+function rulesWindows(texts) {
+  const out = [];
+  for (const t of texts || []) {
+    const m = /@\s*(\d+)\s*$/.exec(t);
+    if (m && !out.includes(+m[1])) out.push(+m[1]);
+  }
+  return out;
+}
+
+// Проставляет заголовок столбца и возвращает окно, по которому его рисовать.
+// Несколько окон в одну колонку не помещаются: берём первое, про остальные
+// говорим в подсказке — полный разбор по всем окнам есть в карточке дева.
+function setWinHeader(th, wins) {
+  const win = wins[0] || 10;
+  th.textContent = 'окно ' + win + (wins.length > 1 ? ' *' : '');
+  th.title = wins.length > 1
+    ? 'правила используют окна ' + wins.join(', ') + '; в столбце — ' + win
+    : '';
+  return win;
+}
+
+function winCell(dev, win) {
   const wins = dev && dev.windows;
   if (!wins) return '<span class="hint">—</span>';
-  const w = wins['10'] || wins[Object.keys(wins)[0]];
-  if (!w) return '<span class="hint">—</span>';
+  const w = wins[String(win)];
+  if (!w) return '<span class="hint">нет окна ' + win + '</span>';
   const g = w.mig > 0 ? '<b>' + w.mig + '/' + w.coins + '</b>' : '<i>0/' + w.coins + '</i>';
   return '<span class="w">' + g + ' · подряд ' + w.streak + ' · gap ' + w.gap + '</span>';
 }
@@ -414,6 +439,9 @@ async function load() {
   catch (e) { return showErr(e.message); }
   showErr(null);
   $('#c-shown').textContent = d.total + (d.stale ? ' (+' + d.stale + ' без данных)' : '');
+  // d.rules приходит с сервера уже раскрытым: пресеты в нём развёрнуты в
+  // обычные правила, поэтому окно видно и когда фильтр задан пресетом.
+  const win = setWinHeader($('#th-win'), rulesWindows(d.rules));
   $('#empty').style.display = d.rows.length ? 'none' : 'block';
   $('#empty').textContent = d.stale
     ? d.stale + ' монет пропущено: их девы профилировались до появления этого окна — ' +
@@ -431,7 +459,7 @@ async function load() {
         esc(dev.username || (r.creator || '').slice(0, 8)) + '</span></td>' +
       '<td class="num">' + (dev.total_coins == null ? '—' : dev.total_coins) + '</td>' +
       '<td class="num">' + (dev.migrated == null ? '—' : dev.migrated) + '</td>' +
-      '<td>' + winCell(dev) + '</td>' +
+      '<td>' + winCell(dev, win) + '</td>' +
       '<td class="num"><span class="score ' + scoreCls(sc) + '">' + sc + '</span></td>' +
       '<td class="nm">' + esc(dev.verdict || '—') + '</td>' +
     '</tr>';
@@ -487,6 +515,9 @@ async function loadPool() {
 
 function renderPool(d) {
   poolLoaded = true;
+  // Пул отбирается своим набором правил, не тем, что стоит на вкладке
+  // репозитория, — и окно у него своё.
+  const win = setWinHeader($('#pth-win'), rulesWindows((d.config || {}).rules));
   $('#p-total').textContent = d.total;
   $('#p-unread').textContent = d.unread;
   $('#pempty').style.display = d.rows.length ? 'none' : 'block';
@@ -501,7 +532,7 @@ function renderPool(d) {
       '<td class="soc">' + socCell(r) + '</td>' +
       '<td><span class="dev" data-a="' + esc(r.creator) + '">' +
         esc(dev.username || (r.creator || '').slice(0, 8)) + '</span></td>' +
-      '<td>' + winCell(dev) + '</td>' +
+      '<td>' + winCell(dev, win) + '</td>' +
       '<td class="num"><span class="score ' + scoreCls(sc) + '">' + sc + '</span></td>' +
       '<td class="why">' + esc((r.why || []).join(' · ')) + '</td>' +
     '</tr>';
