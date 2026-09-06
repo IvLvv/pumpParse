@@ -50,6 +50,9 @@ fi
 # репозиторий помечен bare; рабочего дерева у него по-прежнему нет.
 sudo -u "$USER_NAME" git --git-dir="$REPO" config core.bare false
 sudo -u "$USER_NAME" git --git-dir="$REPO" config core.worktree "$ROOT/app"
+# Обратная сторона снятого core.bare: git считает main «выкаченной веткой»
+# и отбивает пуш в неё. Рабочее дерево обновляет хук, поэтому запрет снимаем.
+sudo -u "$USER_NAME" git --git-dir="$REPO" config receive.denyCurrentBranch ignore
 install -o "$USER_NAME" -g "$USER_NAME" -m 750 "$SRC/post-receive" "$REPO/hooks/post-receive"
 
 echo "== право перезапускать сервис без пароля =="

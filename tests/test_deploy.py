@@ -92,6 +92,10 @@ class TestShellScripts:
         """Без этого checkout с --work-tree откажется работать."""
         assert "core.bare false" in read(SETUP)
 
+    def test_setup_разрешает_пуш_в_текущую_ветку(self):
+        """Обратная сторона снятого core.bare: иначе push в main отбивается."""
+        assert "receive.denyCurrentBranch ignore" in read(SETUP)
+
 
 class TestSystemdUnit:
     def test_перевод_строки_unix(self):
