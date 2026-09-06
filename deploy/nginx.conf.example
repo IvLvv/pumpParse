@@ -1,5 +1,14 @@
 # Образец: TLS и отдача наружу. Сам сервис слушает только 127.0.0.1:8000.
 # Сертификат проще всего получить certbot'ом: certbot --nginx -d pump.example.com
+#
+# Заголовки проставлены вручную, а не через `include proxy_params`: системный
+# файл ставит X-Forwarded-For через $proxy_add_x_forwarded_for, то есть
+# ДОПИСЫВАЕТ значение, присланное клиентом. Сервис считает по первому элементу
+# цепочки попытки входа, и подставленный клиентом адрес обнулял бы блокировку.
+# Здесь заголовок формируется только из $remote_addr.
+
+# В http-секцию (/etc/nginx/nginx.conf) или отдельным файлом в conf.d:
+# limit_req_zone $binary_remote_addr zone=pplogin:1m rate=10r/m;
 
 server {
     listen 80;
@@ -15,30 +24,39 @@ server {
     ssl_certificate     /etc/letsencrypt/live/pump.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/pump.example.com/privkey.pem;
 
-    # Сессионная cookie ходит только по https, поэтому HSTS обязателен:
-    # без него первый заход по http утечёт открытым.
+    # Сессионная cookie ходит только по https (PUMPPARSE_SECURE_COOKIE=1),
+    # поэтому HSTS обязателен: без него первый заход по http утечёт открытым.
     add_header Strict-Transport-Security "max-age=31536000" always;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options DENY always;
 
-    # Перебор пароля упирается ещё и в сервис (5 попыток), но дешевле
+    access_log /var/log/nginx/pumpparse.access.log;
+    error_log  /var/log/nginx/pumpparse.error.log;
+
+    # Тело запросов маленькое: сервис сам отбивает больше 64 КБ, но дешевле
+    # не пускать такое дальше nginx.
+    client_max_body_size 64k;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Страница опрашивает /api/* фоном и держит keep-alive.
+        proxy_read_timeout 75s;
+    }
+
+    # Перебор пароля упирается ещё и в сервис (5 попыток на адрес), но дешевле
     # отбивать его здесь.
     location = /api/login {
         limit_req zone=pplogin burst=5 nodelay;
         proxy_pass http://127.0.0.1:8000;
-        include /etc/nginx/proxy_params;
-        # Клиентский X-Forwarded-For затираем: сервис считает по нему попытки входа.
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        include /etc/nginx/proxy_params;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        # Страница опрашивает /api/* фоном и держит keep-alive.
-        proxy_read_timeout 75s;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
-
-# В http-секцию (/etc/nginx/nginx.conf):
-# limit_req_zone $binary_remote_addr zone=pplogin:1m rate=10r/m;

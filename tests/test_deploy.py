@@ -24,6 +24,12 @@ def read(path):
     return path.read_text(encoding="utf-8")
 
 
+def _nginx_directives():
+    """Образец конфига без комментариев — только то, что nginx исполняет."""
+    return "\n".join(ln for ln in read(DEPLOY / "nginx.conf.example").splitlines()
+                     if not ln.lstrip().startswith("#"))
+
+
 class TestShellScripts:
     @pytest.mark.parametrize("path", [HOOK, SETUP], ids=lambda p: p.name)
     @needs_bash
@@ -132,9 +138,23 @@ class TestSystemdUnit:
         assert "PUMPPARSE_SECURE_COOKIE=0" in src
 
     def test_nginx_затирает_клиентский_xff(self):
-        """Только это делает доверие заголовку осмысленным."""
-        nginx = read(DEPLOY / "nginx.conf.example")
-        assert "proxy_set_header X-Forwarded-For $remote_addr" in nginx
+        """Только это делает доверие заголовку осмысленным.
+
+        Смотрим на директивы, а не на весь файл: почему нельзя брать
+        системный proxy_params, там же написано в комментарии.
+        """
+        cfg = _nginx_directives()
+        assert "proxy_set_header X-Forwarded-For $remote_addr" in cfg
+        # proxy_params ставит XFF через $proxy_add_x_forwarded_for, то есть
+        # ДОПИСЫВАЕТ присланное клиентом: лимит попыток входа так обходится.
+        assert "proxy_add_x_forwarded_for" not in cfg
+        assert "proxy_params" not in cfg
+
+    def test_каждый_проксирующий_location_ставит_xff(self):
+        """Забытый в одном location заголовок — дыра ровно в том месте."""
+        cfg = _nginx_directives()
+        assert cfg.count("proxy_pass") == cfg.count(
+            "proxy_set_header X-Forwarded-For $remote_addr")
 
     def test_у_каждой_секции_есть_заголовок(self):
         src = read(UNIT)
