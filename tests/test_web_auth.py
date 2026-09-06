@@ -276,6 +276,19 @@ class TestMalformedRequests:
     def test_json_не_объект(self, server, body):
         assert server.post("/api/login", body).status == 400
 
+    @pytest.mark.parametrize("body", [
+        '{"username":"admin","password":"неверный"}'.encode("cp1251"),
+        b'{"a": "\xff\xfe"}',
+        b"\x00\x01\x02",
+    ])
+    def test_тело_не_в_utf8(self, server, body):
+        """UnicodeDecodeError не подвид JSONDecodeError: раньше это был 502."""
+        assert server.post("/api/login", body).status == 400
+
+    def test_после_битой_кодировки_сервер_жив(self, server):
+        server.post("/api/login", "пароль".encode("cp1251"))
+        assert server.get("/healthz").status == 200
+
     def test_неизвестный_маршрут_под_сессией(self, server):
         server.login()
         assert server.get("/api/no-such-route").status == 404

@@ -185,7 +185,10 @@ def make_handler(worker, db_path, auth=None, trust_proxy=False):
                 return self._send(413, {"error": f"тело больше {MAX_BODY} байт"})
             try:
                 data = json.loads(self.rfile.read(n) or b"{}")
-            except json.JSONDecodeError as e:
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                # UnicodeDecodeError — не подвид JSONDecodeError: тело в чужой
+                # кодировке раньше пролетало мимо обработчика, роняло поток
+                # с трейсбеком и рвало соединение, а прокси отдавал 502.
                 return self._send(400, {"error": f"битый JSON: {e}"})
             if not isinstance(data, dict):
                 return self._send(400, {"error": "ожидался объект JSON"})
