@@ -25,11 +25,10 @@ RestartSec=5
 
 # Логи в journald без буферизации, иначе вывод висит в трубе до самого падения.
 Environment=PYTHONUNBUFFERED=1
-# Наружу смотрит nginx, он подставляет X-Forwarded-For и затирает клиентский.
-# Только с этим флагом попытки входа считаются по реальному адресу, а не по
-# 127.0.0.1 на всех сразу. Без nginx флаг снять — иначе троттлинг обходится
-# подделкой заголовка.
-Environment=PUMPPARSE_TRUST_PROXY=1
+# PUMPPARSE_TRUST_PROXY и PUMPPARSE_SECURE_COOKIE намеренно живут в
+# EnvironmentFile, а не здесь: они зависят от того, стоит ли уже перед
+# сервисом nginx с TLS, а это состояние конкретной машины, не репозитория.
+# Оба включаются одновременно с nginx, см. deploy/README.md.
 StandardOutput=journal
 StandardError=journal
 

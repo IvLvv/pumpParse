@@ -16,6 +16,7 @@ import time
 USER_ENV = "PUMPPARSE_USER"
 HASH_ENV = "PUMPPARSE_PASSWORD_HASH"
 SECRET_ENV = "PUMPPARSE_SECRET"   # noqa: S105 — имя переменной окружения, не пароль
+SECURE_ENV = "PUMPPARSE_SECURE_COOKIE"
 
 COOKIE = "pp_session"
 DEFAULT_TTL = 14 * 24 * 3600

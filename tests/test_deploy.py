@@ -118,9 +118,21 @@ class TestSystemdUnit:
         assert authmod.HASH_ENV + "=" not in src
         assert authmod.SECRET_ENV + "=" not in src
 
-    def test_доверие_прокси_включено_вместе_с_nginx(self):
-        """Флаг верен только потому, что nginx затирает клиентский XFF."""
-        assert "PUMPPARSE_TRUST_PROXY=1" in read(UNIT)
+    def test_прокси_флаги_не_зашиты_в_юнит(self):
+        """Их значение зависит от машины: есть ли перед сервисом nginx с TLS."""
+        src = read(UNIT)
+        assert "Environment=PUMPPARSE_TRUST_PROXY" not in src
+        assert "Environment=PUMPPARSE_SECURE_COOKIE" not in src
+        assert "PUMPPARSE_TRUST_PROXY" in src, "но упомянуть в комментарии стоит"
+
+    def test_прокси_флаги_выключены_в_заготовке_окружения(self):
+        """Включить их без nginx опаснее, чем забыть включить вместе с ним."""
+        src = read(SETUP)
+        assert "PUMPPARSE_TRUST_PROXY=0" in src
+        assert "PUMPPARSE_SECURE_COOKIE=0" in src
+
+    def test_nginx_затирает_клиентский_xff(self):
+        """Только это делает доверие заголовку осмысленным."""
         nginx = read(DEPLOY / "nginx.conf.example")
         assert "proxy_set_header X-Forwarded-For $remote_addr" in nginx
 

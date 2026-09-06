@@ -331,8 +331,14 @@ def serve(db_path="pump.db", port=8000, interval=20, limit=70, rps=4.0,
     worker.start()
     # Флаг Secure на cookie ломает вход по http://, поэтому по умолчанию его
     # ставим только там, где снаружи ожидается TLS — то есть не на localhost.
+    # За обратным прокси адрес привязки об этом не говорит ничего: сервис
+    # слушает петлю, а наружу отдаётся https, поэтому там флаг задают явно.
     if secure_cookie is None:
-        secure_cookie = host not in ("127.0.0.1", "localhost")
+        env = os.environ.get(authmod.SECURE_ENV)
+        if env in ("0", "1"):
+            secure_cookie = env == "1"
+        else:
+            secure_cookie = host not in ("127.0.0.1", "localhost")
     if trust_proxy is None:
         trust_proxy = os.environ.get("PUMPPARSE_TRUST_PROXY", "") == "1"
     auth = authmod.from_env(Store(db_path), secure=secure_cookie)

@@ -53,6 +53,9 @@ sudo -u "$USER_NAME" git --git-dir="$REPO" config core.worktree "$ROOT/app"
 # Обратная сторона снятого core.bare: git считает main «выкаченной веткой»
 # и отбивает пуш в неё. Рабочее дерево обновляет хук, поэтому запрет снимаем.
 sudo -u "$USER_NAME" git --git-dir="$REPO" config receive.denyCurrentBranch ignore
+# Хук выкатывает коммит по SHA, отсоединённая HEAD тут штатна — не пугаем ею
+# на каждом пуше.
+sudo -u "$USER_NAME" git --git-dir="$REPO" config advice.detachedHead false
 install -o "$USER_NAME" -g "$USER_NAME" -m 750 "$SRC/post-receive" "$REPO/hooks/post-receive"
 
 echo "== право перезапускать сервис без пароля =="
@@ -69,6 +72,12 @@ if [ ! -f "$ENVFILE" ]; then
 PUMPPARSE_USER=admin
 PUMPPARSE_PASSWORD_HASH=
 PUMPPARSE_SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+
+# Обе включить в 1 одновременно с nginx и TLS, не раньше:
+# TRUST_PROXY без прокси даёт обойти лимит попыток подделкой X-Forwarded-For,
+# SECURE_COOKIE без https не даст войти вообще.
+PUMPPARSE_TRUST_PROXY=0
+PUMPPARSE_SECURE_COOKIE=0
 EOF
     echo "   создан $ENVFILE — впишите PUMPPARSE_PASSWORD_HASH, иначе вход отключён"
 else
