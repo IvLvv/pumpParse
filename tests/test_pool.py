@@ -130,3 +130,56 @@ class TestMatch:
         свежая = coin(created_timestamp=int(time.time() * 1000))
         cfg = poolmod.normalize({"age_max_sec": 900})
         assert poolmod.match(свежая, dev(), cfg)[0] is True
+
+
+class TestПорядокПроверок:
+    """Порядок важен: в «почему прошла» видно лишь пройденное до отказа."""
+
+    def test_отказ_по_капе_не_доходит_до_возраста(self):
+        cfg = poolmod.normalize({"mcap_min": 100_000})
+        ok, why = poolmod.match(coin(), dev(), cfg, now=NOW)
+        assert ok is False
+        assert why == [], "капа проверяется первой, причин накопиться не должно"
+
+    def test_отказ_по_возрасту_оставляет_причину_по_капе(self):
+        cfg = poolmod.normalize({"age_max_sec": 10})
+        ok, why = poolmod.match(coin(), dev(), cfg, now=NOW)
+        assert ok is False
+        assert any("капа" in w for w in why)
+        assert not any("возраст" in w for w in why)
+
+    def test_отказ_по_score_оставляет_капу_и_возраст(self):
+        cfg = poolmod.normalize({"min_score": 99})
+        ok, why = poolmod.match(coin(), dev(), cfg, now=NOW)
+        assert ok is False
+        assert any("капа" in w for w in why)
+        assert any("возраст" in w for w in why)
+
+    def test_профиль_дева_проверяется_после_соцсетей(self):
+        """Без профиля судить не по чему, но капу с возрастом уже записали."""
+        cfg = poolmod.normalize({})
+        ok, why = poolmod.match(coin(), None, cfg, now=NOW)
+        assert ok is False
+        assert any("капа" in w for w in why)
+
+
+class TestГраницыИзИнтерфейса:
+    """Значения, которые интерфейс шлёт как «без ограничения»."""
+
+    def test_ноль_в_потолке_капы_снимает_границу(self):
+        cfg = poolmod.normalize({"mcap_max": 0})
+        дорогая = coin(usd_market_cap=10_000_000.0)
+        assert poolmod.match(дорогая, dev(), cfg, now=NOW)[0] is True
+
+    def test_ноль_в_свежести_снимает_границу(self):
+        cfg = poolmod.normalize({"age_max_sec": 0})
+        старая = coin(created_timestamp=int((NOW - 30 * 86400) * 1000))
+        assert poolmod.match(старая, dev(), cfg, now=NOW)[0] is True
+
+    def test_монета_без_капы_считается_нулевой_но_проходит_при_нуле(self):
+        cfg = poolmod.normalize({"mcap_min": 0})
+        assert poolmod.match(coin(usd_market_cap=None), dev(), cfg, now=NOW)[0] is True
+
+    @pytest.mark.parametrize("value", [60, 300, 900, 3600, 86400])
+    def test_все_варианты_свежести_из_интерфейса_разбираются(self, value):
+        assert poolmod.normalize({"age_max_sec": value})["age_max_sec"] == value
