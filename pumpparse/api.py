@@ -98,7 +98,12 @@ class PumpAPI:
     # --- прочее ---
 
     def user(self, address):
-        return self._get(f"{FRONTEND}/users/{address}")
+        """Профиль кошелька. Вспомогательные данные (ник, подписчики):
+        если эндпоинт временно лежит, отдаём пустой профиль, а не роняем анализ."""
+        try:
+            return self._get(f"{FRONTEND}/users/{address}")
+        except (RuntimeError, urllib.error.HTTPError):
+            return None
 
     def sol_price(self):
         return (self._get(f"{FRONTEND}/sol-price") or {}).get("solPrice")
