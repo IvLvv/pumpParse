@@ -20,6 +20,8 @@ STATIC = os.path.join(os.path.dirname(__file__), "static")
 
 # Воркер считает эти окна заранее, поэтому в UI доступны только они.
 WINDOWS = (5, 10, 20, 50)
+# То же с периодами: каждое окно считается по всей истории и по каждому периоду.
+PERIODS = tuple(rulemod.PERIODS)
 
 
 class Worker(threading.Thread):
@@ -49,15 +51,16 @@ class Worker(threading.Thread):
                         continue
                     store.upsert_coin(c)
                     fresh += 1
-                    dev = profile_creator(self.api, c["creator"], store, windows=WINDOWS)
+                    dev = profile_creator(self.api, c["creator"], store,
+                                          windows=WINDOWS, periods=PERIODS)
                     self.state["profiled"] += 1
                     # Конфиг перечитываем на каждой монете, а не раз в цикл: проход по
                     # странице занимает минуты, и правка фильтра из UI иначе применялась
                     # бы только со следующего круга.
                     cfg = poolmod.normalize(store.get_setting("pool_config", {}))
                     if cfg["enabled"]:
-                        ok, why = poolmod.match(c, dev, cfg)
-                        if ok and store.pool_add(c["mint"], why):
+                        added, _ = poolmod.consider(c, dev, cfg, store, self.api)
+                        if added:
                             self.state["pooled"] += 1
                 self.state["new_last_poll"] = fresh
                 self.state["last_poll"] = int(time.time())
@@ -84,7 +87,7 @@ def _apply_rules(rows, rule_texts, require_all):
     rules = [rulemod.parse(t) for t in rule_texts if t.strip()]
     if not rules:
         return rows, [], 0
-    need = {str(r.window) for r in rules}
+    need = rulemod.keys_needed(rules)
     out, stale = [], 0
     for r in rows:
         dev = r.get("dev")
@@ -255,6 +258,7 @@ def make_handler(worker, db_path, auth=None, trust_proxy=False):
                     st["pool_unread"] = store.pool_unread()
                     st["pool_total"] = store.pool_total()
                     st["windows"] = list(WINDOWS)
+                    st["periods"] = list(PERIODS)
                     st["presets"] = rulemod.PRESETS
                     st["metrics"] = rulemod.METRICS
                     return self._send(200, st)
@@ -275,9 +279,10 @@ def make_handler(worker, db_path, auth=None, trust_proxy=False):
                 if u.path == "/api/pool":
                     store = Store(db_path)
                     return self._send(200, {
-                        "rows": store.pool_rows(int(one("limit", 300))),
+                        "devs": store.pool_devs(int(one("limit", 300))),
                         "unread": store.pool_unread(),
                         "total": store.pool_total(),
+                        "coins_total": store.pool_coins_total(),
                         "config": poolmod.normalize(store.get_setting("pool_config", {})),
                     })
 
@@ -286,7 +291,7 @@ def make_handler(worker, db_path, auth=None, trust_proxy=False):
                     if not addr:
                         return self._send(400, {"error": "нужен address"})
                     p = profile_creator(worker.api, addr, Store(db_path),
-                                        cache_age=0, windows=WINDOWS,
+                                        cache_age=0, windows=WINDOWS, periods=PERIODS,
                                         with_coins=True)
                     return self._send(200, p)
 

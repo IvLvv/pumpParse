@@ -108,11 +108,14 @@ class PumpAPI:
     def sol_price(self):
         return (self._get(f"{FRONTEND}/sol-price") or {}).get("solPrice")
 
-    def trades(self, mint, limit=200):
+    # Больше 100 сделок за страницу сервер не отдаёт: 400 Bad Request.
+    TRADES_PAGE = 100
+
+    def trades(self, mint, limit=100):
         """Сделки по монете, v2 (v1 отдаёт 410). Курсорная пагинация."""
         out, cursor = [], None
         while len(out) < limit:
-            p = {"limit": min(200, limit - len(out))}
+            p = {"limit": min(self.TRADES_PAGE, limit - len(out))}
             if cursor:
                 p["cursor"] = cursor
             d = self._get(f"{SWAP}/v2/coins/{mint}/trades", p)
@@ -124,6 +127,11 @@ class PumpAPI:
                 break
             cursor = pg.get("nextCursor")
         return out
+
+    def top_holders(self, mint):
+        """Топ холдеров (до 50) с флагами pump.fun: isDev, isSniper, isBundler."""
+        d = self._get(f"{FRONTEND}/coins/top-holders/{mint}") or {}
+        return d.get("topHolders") or []
 
     def candles(self, mint, interval="1m", limit=100, currency="USD"):
         return self._get(f"{SWAP}/v1/coins/{mint}/candles",

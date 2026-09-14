@@ -53,7 +53,7 @@ def cmd_scan(args):
         rules = rulemod.parse_all(args.rule, args.preset)
     except ValueError as e:
         sys.exit(str(e))
-    wins = rulemod.windows_needed(rules)
+    wins, periods = rulemod.windows_needed(rules), rulemod.periods_needed(rules)
     if rules:
         mode = "все" if not args.any else "любое"
         print("правила (" + mode + "): " + ", ".join(r.raw for r in rules))
@@ -65,7 +65,8 @@ def cmd_scan(args):
                 if store.seen(c["mint"]):
                     continue
                 store.upsert_coin(c)
-                p = profile_creator(api, c["creator"], store, windows=tuple(wins))
+                p = profile_creator(api, c["creator"], store, windows=tuple(wins),
+                                    periods=tuple(periods))
                 if p["score"] < args.min_score or p["migrated"] < args.min_migrated:
                     continue
                 if not rulemod.match(rules, p["windows"], require_all=not args.any):
@@ -95,13 +96,16 @@ def cmd_dev(args):
     except ValueError as e:
         sys.exit(str(e))
     wins = rulemod.windows_needed(rules) if rules else [5, 10, 20]
-    p = profile_creator(api, addr, store, cache_age=0, windows=tuple(wins))
+    p = profile_creator(api, addr, store, cache_age=0, windows=tuple(wins),
+                        periods=tuple(rulemod.periods_needed(rules)))
     w = max(len(k) for k in p)
     for k, v in p.items():
         if k in ("migrated_mints", "windows"):
             continue
         print(f"{k:<{w}} : {v}")
-    for n, m in sorted(p["windows"].items(), key=lambda kv: int(kv[0])):
+    # Ключ среза — '10' или '10/24h': сортируем по окну, затем по периоду.
+    for n, m in sorted(p["windows"].items(),
+                       key=lambda kv: (int(kv[0].split("/")[0]), kv[0])):
         print(f"окно {n:<13} : " + "  ".join(f"{k}={v}" for k, v in m.items()))
     for m in p["migrated_mints"]:
         print(f"миграция           : https://pump.fun/coin/{m}")

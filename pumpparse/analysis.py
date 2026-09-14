@@ -8,6 +8,8 @@
 import statistics
 import time
 
+from .rules import PERIODS, window_key
+
 
 def is_migrated(c):
     """Настоящая миграция, а не завершённый раунд Mayhem.
@@ -53,9 +55,17 @@ def _best_streak(flags):
     return best
 
 
-def window_metrics(coins, n, now=None):
-    """Метрики по последним n монетам дева (свежие первыми)."""
+def window_metrics(coins, n, now=None, period=None):
+    """Метрики по последним n монетам дева (свежие первыми).
+
+    period — имя из rules.PERIODS: сначала отсекаются монеты старше периода,
+    и только из оставшихся берутся последние n. Так streak>=3@10/24h видит
+    серию, сделанную сегодня, а не полгода назад.
+    """
     now = now or int(time.time() * 1000)
+    if period:
+        since = now - PERIODS[period] * 1000
+        coins = [c for c in coins if (c.get("created_timestamp") or 0) >= since]
     w = coins[:n]
     if not w:
         return dict.fromkeys(
@@ -114,17 +124,23 @@ def compact(c, now=None):
     }
 
 
+def window_keys(windows, periods=()):
+    """Все срезы окно×период, которые считаются в снимке: '10', '10/24h', ..."""
+    return [window_key(n, p) for n in windows for p in (None, *periods)]
+
+
 def profile_creator(api, address, store=None, cache_age=3600, max_coins=300,
-                    windows=(5, 10, 20), with_coins=False):
+                    windows=(5, 10, 20), periods=(), with_coins=False):
     """Сводка по кошельку: сколько запусков и сколько из них мигрировало.
 
     'Мигрировала' = complete без mayhem_state: бондинг-кривая закрыта и
     ликвидность ушла в пул (см. is_migrated).
     """
+    keys = window_keys(windows, periods)
     if store:
         cached = store.cached_creator(address, cache_age)
-        # Кеш годится, только если в нём посчитаны все нужные окна.
-        if cached and all(str(n) in (cached.get("windows") or {}) for n in windows):
+        # Кеш годится, только если в нём посчитаны все нужные срезы.
+        if cached and all(k in (cached.get("windows") or {}) for k in keys):
             return cached
 
     coins = api.creator_coins(address, max_coins=max_coins)
@@ -163,7 +179,8 @@ def profile_creator(api, address, store=None, cache_age=3600, max_coins=300,
         "launches_per_day": round(per_day, 2),
         "first_launch": first_launch,
         "truncated": truncated,
-        "windows": {str(n): window_metrics(coins, n, now) for n in windows},
+        "windows": {window_key(n, p): window_metrics(coins, n, now, p)
+                    for n in windows for p in (None, *periods)},
         "migrated_mints": [c["mint"] for c in migrated],
     }
     s["verdict"] = verdict(s)

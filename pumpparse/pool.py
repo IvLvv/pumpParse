@@ -1,4 +1,10 @@
-"""Пул: настраиваемый отбор новых монет по деву, капе и свежести.
+"""Пул: настраиваемый отбор девов по их новым монетам, капе и свежести.
+
+В пуле живут девы. Дев попадает туда, когда его новая монета проходит фильтр;
+дальше каждая его следующая монета поднимает его наверх списка с пометкой
+«новая монета» — фильтр по капе, возрасту и правилам к ней уже не применяется,
+дев уже отобран. Единственное, что проверяется всегда, — накрутка: монету,
+которую крутят ботами, в пул не пускаем, даже от знакомого дева.
 
 Фильтр живёт на сервере, а не в браузере: монеты отбираются в момент появления
 фоновым воркером, поэтому пул наполняется и при закрытой странице.
@@ -6,6 +12,7 @@
 import time
 
 from . import rules as rulemod
+from . import wash as washmod
 
 DEFAULT = {
     "enabled": True,
@@ -16,6 +23,7 @@ DEFAULT = {
     "age_max_sec": 900,     # брать монеты не старше этого возраста
     "require_social": False,   # только с привязанным X/TG/сайтом
     "min_score": 0,
+    "wash_filter": True,       # отсеивать монеты с признаками накрутки (см. wash.py)
 }
 
 
@@ -26,6 +34,7 @@ def normalize(cfg):
     c["enabled"] = bool(c["enabled"])
     c["any"] = bool(c["any"])
     c["require_social"] = bool(c["require_social"])
+    c["wash_filter"] = bool(c["wash_filter"])
     c["rules"] = [str(r).strip() for r in (c["rules"] or []) if str(r).strip()]
     for r in c["rules"]:
         rulemod.parse(r)                     # падаем сразу, а не на каждой монете
@@ -66,11 +75,35 @@ def match(coin, dev, cfg, now=None):
     if cfg["rules"]:
         parsed = [rulemod.parse(r) for r in cfg["rules"]]
         wins = dev.get("windows") or {}
-        need = {str(r.window) for r in parsed}
-        if not need <= set(wins):
-            return False, why          # окно не посчитано — судить не по чему
+        if not rulemod.keys_needed(parsed) <= set(wins):
+            return False, why          # срез не посчитан — судить не по чему
         if not rulemod.match(parsed, wins, require_all=not cfg["any"]):
             return False, why
         why += [r.raw for r in parsed if r.test(wins)]
 
     return True, why
+
+
+def consider(coin, dev, cfg, store, api, now=None):
+    """Полная проверка новой монеты воркером. Возвращает (добавлена, причины).
+
+    Порядок: сначала дешёвые проверки по уже имеющимся данным (match), и только
+    прошедшим — проверка накрутки, потому что она стоит два запроса к API.
+    Дев, который уже в пуле, проходит match автоматически: его следующая
+    монета должна поднять его наверх, а не пройти отбор заново.
+    """
+    if store.pool_has_dev(coin.get("creator")):
+        ok, why = True, ["дев уже в пуле"]
+    else:
+        ok, why = match(coin, dev, cfg, now)
+    if not ok:
+        return False, why
+
+    if cfg["wash_filter"]:
+        w = washmod.inspect(api, coin)
+        store.set_coin_wash(coin["mint"], w)
+        why.append(washmod.label(w))
+        if w["suspicious"]:
+            return False, why
+
+    return store.pool_add(coin["mint"], why), why

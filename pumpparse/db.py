@@ -17,11 +17,14 @@ CREATE TABLE IF NOT EXISTS coins (
     usd_market_cap REAL,
     ath_market_cap REAL,
     twitter TEXT, telegram TEXT, website TEXT,
+    wash TEXT,
     raw TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_coins_creator ON coins(creator);
 CREATE INDEX IF NOT EXISTS idx_coins_created ON coins(created_timestamp DESC);
 
+-- Журнал попаданий в пул: строка на монету. Сам пул — список девов,
+-- он собирается из журнала группировкой по создателю (pool_devs).
 CREATE TABLE IF NOT EXISTS pool (
     mint TEXT PRIMARY KEY,
     added_at INTEGER,
@@ -71,13 +74,14 @@ class Store:
 
     def _add_missing_columns(self):
         """CREATE TABLE IF NOT EXISTS не достраивает колонки существующей таблице."""
-        for col in ("mayhem", "venue"):
+        for col in ("mayhem", "venue", "wash"):
             if self._cols("coins") and col not in self._cols("coins"):
                 self.db.execute(f"ALTER TABLE coins ADD COLUMN {col} TEXT")
 
     # Растёт, когда прошлые снимки девов посчитаны по устаревшим правилам
     # и их нельзя показывать: кеш сбрасывается, воркер переберёт девов заново.
-    CACHE_REV = 3
+    # 4 — в снимке появились срезы с периодом (10/24h и т.п.).
+    CACHE_REV = 4
 
     def _drop_stale_cache(self):
         rev = self.db.execute(
@@ -111,6 +115,13 @@ class Store:
              c.get("twitter"), c.get("telegram"), c.get("website"), json.dumps(c)))
         self.db.commit()
 
+    def set_coin_wash(self, mint, w):
+        """Вердикт по накрутке считается не всем монетам, а только кандидатам
+        в пул — поэтому отдельной записью, а не в upsert_coin."""
+        self.db.execute("UPDATE coins SET wash=? WHERE mint=?",
+                        (json.dumps(w, ensure_ascii=False), mint))
+        self.db.commit()
+
     def save_creator(self, s):
         self.db.execute(
             """INSERT INTO creators (address,username,followers,total_coins,migrated,
@@ -133,7 +144,7 @@ class Store:
             """SELECT c.mint, c.name, c.symbol, c.creator, c.username,
                       c.created_timestamp, c.first_seen, c.complete, c.mayhem, c.venue,
                       c.usd_market_cap, c.ath_market_cap,
-                      c.twitter, c.telegram, c.website,
+                      c.twitter, c.telegram, c.website, c.wash,
                       cr.raw AS dev_raw
                  FROM coins c LEFT JOIN creators cr ON cr.address = c.creator
                 ORDER BY c.created_timestamp DESC LIMIT ?""", (limit,)).fetchall()
@@ -141,6 +152,7 @@ class Store:
         for r in rows:
             d = dict(r)
             d["dev"] = json.loads(d.pop("dev_raw")) if d["dev_raw"] else None
+            d["wash"] = json.loads(d["wash"]) if d["wash"] else None
             out.append(d)
         return out
 
@@ -151,6 +163,10 @@ class Store:
         return {"coins": c, "creators": d, "creators_with_mig": g}
 
     # --- пул ---
+    #
+    # В пуле живут девы, а не монеты. Журнал `pool` хранит по строке на каждую
+    # монету, которая прошла фильтр; дев в списке один, наверху — тот, чья
+    # монета пришла последней, и он «горит», пока её не отметили прочитанной.
 
     def pool_add(self, mint, why):
         cur = self.db.execute(
@@ -159,27 +175,60 @@ class Store:
         self.db.commit()
         return cur.rowcount > 0
 
-    def pool_rows(self, limit=300):
+    def pool_has_dev(self, address):
+        return self.db.execute(
+            "SELECT 1 FROM pool p JOIN coins c ON c.mint = p.mint WHERE c.creator=? LIMIT 1",
+            (address,)).fetchone() is not None
+
+    def pool_coins(self):
+        """Журнал целиком, свежие попадания первыми."""
         rows = self.db.execute(
             """SELECT p.mint, p.added_at, p.seen, p.why,
                       c.name, c.symbol, c.creator, c.created_timestamp,
                       c.usd_market_cap, c.ath_market_cap,
-                      c.twitter, c.telegram, c.website,
-                      cr.raw AS dev_raw
+                      c.twitter, c.telegram, c.website, c.wash
                  FROM pool p
                  JOIN coins c ON c.mint = p.mint
-                 LEFT JOIN creators cr ON cr.address = c.creator
-                ORDER BY p.added_at DESC LIMIT ?""", (limit,)).fetchall()
+                ORDER BY p.added_at DESC""").fetchall()
         out = []
         for r in rows:
             d = dict(r)
-            d["dev"] = json.loads(d.pop("dev_raw")) if d["dev_raw"] else None
             d["why"] = json.loads(d["why"]) if d["why"] else []
+            d["wash"] = json.loads(d["wash"]) if d["wash"] else None
             out.append(d)
         return out
 
+    def pool_devs(self, limit=300):
+        """Девы пула: наверху тот, у кого монета появилась последней.
+
+        У каждого — все его монеты из журнала (свежие первыми), число
+        непрочитанных и профиль. Группировка в Python, а не в SQL: помимо
+        агрегатов нужен сам список монет, а строк в журнале немного.
+        """
+        devs, order = {}, []
+        for c in self.pool_coins():
+            addr = c.pop("creator")
+            if addr not in devs:
+                devs[addr] = {"address": addr, "bumped_at": c["added_at"],
+                              "added_at": c["added_at"], "unread": 0, "coins": []}
+                order.append(addr)
+            d = devs[addr]
+            d["added_at"] = min(d["added_at"], c["added_at"])
+            d["unread"] += 0 if c["seen"] else 1
+            d["coins"].append(c)
+        out = [devs[a] for a in order[:limit]]
+        for d in out:
+            r = self.db.execute("SELECT raw FROM creators WHERE address=?",
+                                (d["address"],)).fetchone()
+            d["dev"] = json.loads(r["raw"]) if r else None
+            d["latest"] = d["coins"][0]
+        return out
+
     def pool_unread(self):
-        return self.db.execute("SELECT COUNT(*) FROM pool WHERE seen=0").fetchone()[0]
+        """Сколько девов «горят» — у кого есть непрочитанная монета."""
+        return self.db.execute(
+            """SELECT COUNT(DISTINCT c.creator) FROM pool p
+                 JOIN coins c ON c.mint = p.mint WHERE p.seen=0""").fetchone()[0]
 
     def pool_mark_seen(self):
         n = self.db.execute("UPDATE pool SET seen=1 WHERE seen=0").rowcount
@@ -192,6 +241,12 @@ class Store:
         return n
 
     def pool_total(self):
+        """Девов в пуле."""
+        return self.db.execute(
+            """SELECT COUNT(DISTINCT c.creator) FROM pool p
+                 JOIN coins c ON c.mint = p.mint""").fetchone()[0]
+
+    def pool_coins_total(self):
         return self.db.execute("SELECT COUNT(*) FROM pool").fetchone()[0]
 
     # --- настройки ---

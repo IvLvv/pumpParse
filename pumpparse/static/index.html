@@ -109,6 +109,14 @@
   .toast b{color:var(--acc)}
   .toast .nm{margin-top:2px}
   .why{font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .new{display:inline-block;background:var(--bad);color:#fff;border-radius:6px;padding:1px 7px;
+       font-size:11px;font-weight:700;margin-right:6px;animation:glow 1.4s ease-in-out infinite alternate}
+  @keyframes glow{from{box-shadow:0 0 2px var(--bad)}to{box-shadow:0 0 12px var(--bad)}}
+  .wash{display:inline-block;background:rgba(248,81,73,.15);color:var(--bad);border:1px solid var(--bad);
+        border-radius:4px;padding:0 5px;font-size:10px;margin-left:6px;font-family:var(--mono)}
+  .prev{font-size:11px;color:var(--dim);margin-top:2px}
+  .prev a{color:var(--dim);text-decoration:none;margin-right:6px}
+  .prev a:hover{color:var(--txt)}
 </style>
 </head>
 <body>
@@ -152,6 +160,8 @@
         <input id="v" type="number" step="any" value="3" style="width:90px">
         <span class="hint">@ последних</span>
         <select id="w"></select>
+        <span class="hint">за</span>
+        <select id="per"></select>
         <button id="add">добавить</button>
         <span class="hint" id="mhint"></span>
       </div>
@@ -188,8 +198,8 @@
       <div class="row">
         <span class="lbl">пул</span>
         <label class="hint"><input type="checkbox" id="p-enabled" checked> отбор включён</label>
-        <span class="hint">новые монеты, прошедшие фильтр, попадают сюда автоматически —
-          даже когда вкладка закрыта</span>
+        <span class="hint">в пул попадают девы: первая монета, прошедшая фильтр, заводит дева в список,
+          каждая следующая поднимает его наверх с пометкой «новая монета» — даже когда вкладка закрыта</span>
       </div>
       <div class="row">
         <span class="lbl">капа $</span>
@@ -209,6 +219,12 @@
         <input id="p-score" type="number" value="0" style="width:80px">
       </div>
       <div class="row">
+        <span class="lbl">накрутка</span>
+        <label class="hint"><input type="checkbox" id="p-wash" checked> отсеивать монеты, которые крутят</label>
+        <span class="hint">по сделкам и холдерам: бот-объём из копеечных сделок, кошельки-клоны с одинаковым
+          балансом, самокрутка парой адресов, бандл с запуска. Проверяется и у девов, уже сидящих в пуле</span>
+      </div>
+      <div class="row">
         <span class="lbl">дев</span>
         <select id="pm"></select>
         <select id="pop">
@@ -217,6 +233,8 @@
         <input id="pv" type="number" step="any" value="3" style="width:90px">
         <span class="hint">@ последних</span>
         <select id="pw"></select>
+        <span class="hint">за</span>
+        <select id="pper"></select>
         <button id="padd">добавить</button>
         <span class="hint" id="pmhint"></span>
       </div>
@@ -236,20 +254,20 @@
     </div>
 
     <div class="row" style="margin-bottom:10px">
-      <span class="stat">в пуле <b id="p-total">0</b> монет · непрочитанных <b id="p-unread">0</b></span>
+      <span class="stat">в пуле <b id="p-total">0</b> девов · монет <b id="p-coins">0</b> · с новой монетой <b id="p-unread">0</b></span>
       <button id="p-seen">отметить прочитанными</button>
     </div>
 
     <div class="tablewrap">
       <table>
         <thead><tr>
-          <th>добавлено</th><th>возраст</th><th>тикер</th><th class="num">капа</th>
-          <th>соцсети</th><th>дев</th><th id="pth-win">окно 10</th><th class="num">score</th><th>почему прошла</th>
+          <th>обновлён</th><th>дев</th><th class="num">в пуле</th><th>последняя монета</th><th>возраст</th>
+          <th class="num">капа</th><th>соцсети</th><th id="pth-win">окно 10</th><th class="num">score</th><th>почему прошла</th>
         </tr></thead>
         <tbody id="ptb"></tbody>
       </table>
     </div>
-    <div id="pempty" class="empty">пул пуст — настрой фильтр и дождись новых монет</div>
+    <div id="pempty" class="empty">пул пуст — настрой фильтр и дождись девов с подходящими монетами</div>
   </section>
 </main>
 
@@ -261,7 +279,8 @@
 
 <script>
 const $ = s => document.querySelector(s);
-let RULES = [], PRULES = [], PRESETS = {}, METRICS = {}, WINDOWS = [];
+let RULES = [], PRULES = [], PRESETS = {}, METRICS = {}, WINDOWS = [], PERIODS = [];
+const PERIOD_RU = { '1h': '1 час', '6h': '6 часов', '24h': 'сутки', '7d': '7 дней', '30d': '30 дней' };
 let page = 'repo', lastUnread = 0, poolLoaded = false;
 const active = new Set();
 
@@ -315,7 +334,7 @@ async function status() {
   let r;
   try { r = await api('/api/status'); }
   catch (e) { return showErr('сервер недоступен: ' + e.message); }
-  METRICS = r.metrics; WINDOWS = r.windows; PRESETS = r.presets;
+  METRICS = r.metrics; WINDOWS = r.windows; PERIODS = r.periods || []; PRESETS = r.presets;
   $('#c-coins').textContent = r.counts.coins;
   $('#c-devs').textContent = r.counts.creators;
   $('#c-poll').textContent = r.last_poll
@@ -343,8 +362,11 @@ async function status() {
 function initControls() {
   const opts = Object.keys(METRICS).map(k => '<option value="' + k + '">' + k + '</option>').join('');
   const wins = WINDOWS.map(w => '<option' + (w === 10 ? ' selected' : '') + '>' + w + '</option>').join('');
+  const pers = '<option value="">всё время</option>' + PERIODS.map(p =>
+    '<option value="' + p + '">' + (PERIOD_RU[p] || p) + '</option>').join('');
   $('#m').innerHTML = opts; $('#pm').innerHTML = opts;
   $('#w').innerHTML = wins; $('#pw').innerHTML = wins;
+  $('#per').innerHTML = pers; $('#pper').innerHTML = pers;
   $('#presets').innerHTML = Object.entries(PRESETS).map(([k, v]) =>
     '<span class="preset" data-p="' + k + '" title="' + esc(v.join(' и ')) + '">' + k + '</span>').join(' ');
   $('#presets').onclick = e => {
@@ -382,27 +404,33 @@ function drawPChips() {
   box.querySelectorAll('x').forEach(x => x.onclick = () => { PRULES.splice(+x.dataset.i, 1); drawPChips(); });
 }
 
-// Окна, упомянутые в правилах, в порядке появления. Нужны, чтобы столбец
-// среза показывал то же окно, по которому шёл отбор: иначе строка, прошедшая
-// mig>=3@20, показывает срез по десятке и выглядит не проходящей условие,
-// по которому она как раз и попала в список.
+// Срезы (окно или окно/период), упомянутые в правилах, в порядке появления.
+// Нужны, чтобы столбец среза показывал то же окно, по которому шёл отбор:
+// иначе строка, прошедшая mig>=3@20, показывает срез по десятке и выглядит
+// не проходящей условие, по которому она как раз и попала в список.
 function rulesWindows(texts) {
   const out = [];
   for (const t of texts || []) {
-    const m = /@\s*(\d+)\s*$/.exec(t);
-    if (m && !out.includes(+m[1])) out.push(+m[1]);
+    const m = /@\s*(\d+)\s*(?:\/\s*(\w+))?\s*$/.exec(t);
+    if (!m) continue;
+    const key = m[2] ? m[1] + '/' + m[2] : m[1];
+    if (!out.includes(key)) out.push(key);
   }
   return out;
 }
+const winLabel = key => {
+  const [w, p] = String(key).split('/');
+  return 'окно ' + w + (p ? ' за ' + (PERIOD_RU[p] || p) : '');
+};
 
 // Проставляет заголовок столбца и возвращает окно, по которому его рисовать.
 // Несколько окон в одну колонку не помещаются: берём первое, про остальные
 // говорим в подсказке — полный разбор по всем окнам есть в карточке дева.
 function setWinHeader(th, wins) {
-  const win = wins[0] || 10;
-  th.textContent = 'окно ' + win + (wins.length > 1 ? ' *' : '');
+  const win = wins[0] || '10';
+  th.textContent = winLabel(win) + (wins.length > 1 ? ' *' : '');
   th.title = wins.length > 1
-    ? 'правила используют окна ' + wins.join(', ') + '; в столбце — ' + win
+    ? 'правила используют срезы ' + wins.join(', ') + '; в столбце — ' + win
     : '';
   return win;
 }
@@ -411,7 +439,7 @@ function winCell(dev, win) {
   const wins = dev && dev.windows;
   if (!wins) return '<span class="hint">—</span>';
   const w = wins[String(win)];
-  if (!w) return '<span class="hint">нет окна ' + win + '</span>';
+  if (!w) return '<span class="hint">нет среза ' + win + '</span>';
   const g = w.mig > 0 ? '<b>' + w.mig + '/' + w.coins + '</b>' : '<i>0/' + w.coins + '</i>';
   return '<span class="w">' + g + ' · подряд ' + w.streak + ' · gap ' + w.gap + '</span>';
 }
@@ -422,9 +450,11 @@ function socCell(r) {
     .filter(Boolean).join(' ') || '<span class="hint">—</span>';
 }
 
+const washMark = r => r.wash && r.wash.suspicious
+  ? '<span class="wash" title="' + esc('накрутка: ' + r.wash.flags.join(', ')) + '">крутят</span>' : '';
 const symCell = r => '<a class="sym" style="color:inherit;text-decoration:none" target="_blank" ' +
   'rel="noreferrer" href="https://pump.fun/coin/' + esc(r.mint) + '">' + esc(r.symbol || '?') + '</a>' +
-  '<div class="nm">' + esc((r.name || '').slice(0, 26)) + '</div>';
+  washMark(r) + '<div class="nm">' + esc((r.name || '').slice(0, 26)) + '</div>';
 
 /* ---------------- общий репозиторий ---------------- */
 async function load() {
@@ -479,6 +509,7 @@ async function loadPoolConfig() {
   $('#p-mcmin').value = c.mcap_min || '';
   $('#p-mcmax').value = c.mcap_max == null ? '' : c.mcap_max;
   $('#p-social').checked = c.require_social;
+  $('#p-wash').checked = c.wash_filter;
   $('#p-score').value = c.min_score;
   const ageSel = $('#p-age');
   const val = String(c.age_max_sec == null ? 0 : c.age_max_sec);
@@ -498,6 +529,7 @@ async function savePoolConfig() {
     mcap_max: $('#p-mcmax').value === '' ? null : +$('#p-mcmax').value,
     age_max_sec: +$('#p-age').value,
     require_social: $('#p-social').checked,
+    wash_filter: $('#p-wash').checked,
     min_score: +$('#p-score').value || 0
   };
   try { await api('/api/pool/config', cfg); }
@@ -519,47 +551,63 @@ function renderPool(d) {
   // репозитория, — и окно у него своё.
   const win = setWinHeader($('#pth-win'), rulesWindows((d.config || {}).rules));
   $('#p-total').textContent = d.total;
+  $('#p-coins').textContent = d.coins_total;
   $('#p-unread').textContent = d.unread;
-  $('#pempty').style.display = d.rows.length ? 'none' : 'block';
-  $('#ptb').innerHTML = d.rows.map(r => {
+  $('#pempty').style.display = d.devs.length ? 'none' : 'block';
+  $('#ptb').innerHTML = d.devs.map(r => {
     const dev = r.dev || {};
     const sc = dev.score == null ? 0 : dev.score;
-    return '<tr class="' + (r.seen ? '' : 'fresh') + '">' +
-      '<td class="w">' + age(r.added_at) + ' назад</td>' +
-      '<td class="w">' + age(r.created_timestamp) + '</td>' +
-      '<td>' + symCell(r) + '</td>' +
-      '<td class="num">' + fmt(r.usd_market_cap) + '</td>' +
-      '<td class="soc">' + socCell(r) + '</td>' +
-      '<td><span class="dev" data-a="' + esc(r.creator) + '">' +
-        esc(dev.username || (r.creator || '').slice(0, 8)) + '</span></td>' +
+    const c = r.latest;
+    // Прошлые монеты дева из журнала — коротко, ссылками; полная история в карточке.
+    const prev = r.coins.slice(1, 6).map(x =>
+      '<a target="_blank" rel="noreferrer" href="https://pump.fun/coin/' + esc(x.mint) + '" ' +
+      'title="' + esc((x.name || '') + ' · ' + age(x.added_at) + ' назад') + '">' + esc(x.symbol || '?') + '</a>').join('');
+    return '<tr class="' + (r.unread ? 'fresh' : '') + '">' +
+      '<td class="w">' + age(r.bumped_at) + ' назад</td>' +
+      '<td><span class="dev" data-a="' + esc(r.address) + '">' +
+        esc(dev.username || r.address.slice(0, 8)) + '</span>' +
+        (prev ? '<div class="prev">раньше: ' + prev + (r.coins.length > 6 ? '…' : '') + '</div>' : '') + '</td>' +
+      '<td class="num">' + r.coins.length + '</td>' +
+      '<td>' + (r.unread ? '<span class="new">новая монета</span>' : '') + symCell(c) + '</td>' +
+      '<td class="w">' + age(c.created_timestamp) + '</td>' +
+      '<td class="num">' + fmt(c.usd_market_cap) + '</td>' +
+      '<td class="soc">' + socCell(c) + '</td>' +
       '<td>' + winCell(dev, win) + '</td>' +
       '<td class="num"><span class="score ' + scoreCls(sc) + '">' + sc + '</span></td>' +
-      '<td class="why">' + esc((r.why || []).join(' · ')) + '</td>' +
+      '<td class="why">' + esc((c.why || []).join(' · ')) + '</td>' +
     '</tr>';
   }).join('');
   bindDevs('#ptb');
 }
 
-function toast(row) {
+function toast(dev, row, isNew) {
   const box = $('#toasts');
   const el = document.createElement('div');
   el.className = 'toast';
-  el.innerHTML = '<b>+ в пул: ' + esc(row.symbol || '?') + '</b>' +
-    '<div class="nm">' + esc((row.name || '').slice(0, 30)) + ' · ' + fmt(row.usd_market_cap) + '</div>' +
+  const who = esc((dev.dev && dev.dev.username) || dev.address.slice(0, 8));
+  el.innerHTML = '<b>' + (isNew ? '+ дев в пул: ' : 'новая монета у ') + who + '</b>' +
+    '<div class="nm">' + esc(row.symbol || '?') + ' · ' + esc((row.name || '').slice(0, 30)) +
+      ' · ' + fmt(row.usd_market_cap) + '</div>' +
     '<div class="why">' + esc((row.why || []).join(' · ')) + '</div>';
   el.onclick = () => el.remove();
   box.appendChild(el);
   setTimeout(() => el.remove(), 9000);
 }
 
-let knownPool = new Set();
+// Что уже видели: девов — чтобы отличить «дев в пул» от «новая монета у дева»,
+// монеты — чтобы не тостить одно и то же дважды.
+let knownPool = new Set(), knownDevs = new Set();
 async function pollPool() {
   let d;
   try { d = await api('/api/pool?limit=50'); } catch (e) { return; }
-  const first = !knownPool.size;
-  d.rows.forEach(r => {
-    if (!first && !knownPool.has(r.mint) && !r.seen) toast(r);
-    knownPool.add(r.mint);
+  const first = !knownPool.size && !knownDevs.size;
+  d.devs.forEach(r => {
+    const isNew = !knownDevs.has(r.address);
+    r.coins.forEach(c => {
+      if (!first && !knownPool.has(c.mint) && !c.seen) toast(r, c, isNew);
+      knownPool.add(c.mint);
+    });
+    knownDevs.add(r.address);
   });
   if (page === 'pool') renderPool(d);
 }
@@ -571,8 +619,12 @@ async function openDev(addr) {
   let p;
   try { p = await api('/api/dev?address=' + encodeURIComponent(addr)); }
   catch (e) { $('#dbody').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; return; }
-  const wins = Object.entries(p.windows).sort((a, b) => a[0] - b[0]).map(([n, w]) =>
-    '<tr><td>окно ' + n + '</td><td>' + w.mig + '/' + w.coins + ' миграций</td>' +
+  // Срезы '10' и '10/24h': сначала по окну, внутри — вся история, потом периоды.
+  const ord = k => { const [w, p] = k.split('/'); return [+w, p ? PERIODS.indexOf(p) + 1 : 0]; };
+  const wins = Object.entries(p.windows).sort((a, b) => {
+    const [x, y] = [ord(a[0]), ord(b[0])]; return x[0] - y[0] || x[1] - y[1];
+  }).map(([n, w]) =>
+    '<tr><td>' + winLabel(n) + '</td><td>' + w.mig + '/' + w.coins + ' миграций</td>' +
     '<td>подряд ' + w.streak + '</td><td>ray ' + w.ray + ' · swap ' + w.pswap + '</td>' +
     '<td>' + w.pace + '/сут</td></tr>').join('');
   const rows = [
@@ -641,12 +693,14 @@ async function setWorker(on) {
 $('#m').onchange = () => hint('#m', '#mhint');
 $('#pm').onchange = () => hint('#pm', '#pmhint');
 $('#add').onclick = () => {
-  const r = $('#m').value + $('#op').value + $('#v').value + '@' + $('#w').value;
+  const r = $('#m').value + $('#op').value + $('#v').value + '@' + $('#w').value +
+    ($('#per').value ? '/' + $('#per').value : '');
   if (!RULES.includes(r)) RULES.push(r);
   drawChips(); load();
 };
 $('#padd').onclick = () => {
-  const r = $('#pm').value + $('#pop').value + $('#pv').value + '@' + $('#pw').value;
+  const r = $('#pm').value + $('#pop').value + $('#pv').value + '@' + $('#pw').value +
+    ($('#pper').value ? '/' + $('#pper').value : '');
   if (!PRULES.includes(r)) PRULES.push(r);
   drawPChips();
 };
@@ -664,8 +718,8 @@ document.querySelectorAll('input[name=mode]').forEach(e => e.onchange = load);
 $('#p-save').onclick = savePoolConfig;
 $('#p-seen').onclick = () => api('/api/pool/seen', {}).then(() => { loadPool(); status(); });
 $('#p-clear').onclick = () => {
-  if (!confirm('Очистить пул? Монеты удалятся только из пула, общий репозиторий не тронется.')) return;
-  api('/api/pool/clear', {}).then(() => { knownPool.clear(); loadPool(); status(); });
+  if (!confirm('Очистить пул? Девы удалятся только из пула, общий репозиторий не тронется.')) return;
+  api('/api/pool/clear', {}).then(() => { knownPool.clear(); knownDevs.clear(); loadPool(); status(); });
 };
 
 status(); load(); pollPool();
