@@ -249,6 +249,17 @@ class TestМиграцияСхемы:
         db.close()
         assert "wash" in Store(p)._cols("coins")
 
+    def test_гонка_двух_соединений_за_колонку(self, tmp_path, monkeypatch):
+        """Регрессия: на проде воркер и HTTP-поток открыли Store одновременно,
+        второй ALTER упал с duplicate column и убил поток воркера."""
+        p = str(tmp_path / "t.db")
+        Store(p).db.close()                       # колонка wash уже есть
+        orig = Store._cols
+        # Второе соединение «не видит» колонку — как поток, проверивший схему
+        # за миг до того, как первый её дописал.
+        monkeypatch.setattr(Store, "_cols", lambda self, t: orig(self, t) - {"wash"})
+        Store(p)                                  # раньше падало duplicate column
+
     def test_смена_ревизии_кеша_сбрасывает_снимки(self, tmp_path):
         p = str(tmp_path / "t.db")
         st = Store(p)

@@ -76,7 +76,14 @@ class Store:
         """CREATE TABLE IF NOT EXISTS не достраивает колонки существующей таблице."""
         for col in ("mayhem", "venue", "wash"):
             if self._cols("coins") and col not in self._cols("coins"):
-                self.db.execute(f"ALTER TABLE coins ADD COLUMN {col} TEXT")
+                try:
+                    self.db.execute(f"ALTER TABLE coins ADD COLUMN {col} TEXT")
+                except sqlite3.OperationalError as e:
+                    # Воркер и HTTP-поток открывают Store одновременно: оба видят,
+                    # что колонки нет, и оба её добавляют. Проигравший гонку
+                    # раньше падал — а это был поток воркера, и лента замирала.
+                    if "duplicate column" not in str(e):
+                        raise
 
     # Растёт, когда прошлые снимки девов посчитаны по устаревшим правилам
     # и их нельзя показывать: кеш сбрасывается, воркер переберёт девов заново.
